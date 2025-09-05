@@ -33,7 +33,7 @@ src/
 gradio_app.py                 # simple RAG UI (retrieval + local generation)
 config/
   .env.example                # environment variables template
-mailstore/                    # your local data lives here (git‑ignored)
+mailstore/                    # local data (git‑ignored)
 legacy/                       # original uploaded .py files (for reference)
 requirements.txt
 .gitignore
@@ -72,12 +72,12 @@ python gradio_app.py
 ## Configuration
 
 - `OPENAI_API_KEY`: required for embeddings.
-- `CHROMA_DIR`, `CHROMA_COLLECTION`: where to store embeddings.
-- `NORMALIZED_DIR`: where your cleaned JSONL lives.
+- `CHROMA_DIR`, `CHROMA_COLLECTION`: embeddings storage, the collection name.
+- `NORMALIZED_DIR`: cleaned JSONL with data.
 - `OLLAMA_URL`, `OLLAMA_MODEL`: local generation endpoint/model.
 
 ## Privacy & security
-- Your email content remains local. Generation is performed with a locally hosted Qwen model via Ollama.
+- The email content remains local. Generation is performed with a locally hosted Qwen model via Ollama.
 - The `mailstore/` directory is **git‑ignored** and never uploaded.
 
 ## GitHub setup
