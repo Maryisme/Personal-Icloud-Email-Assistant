@@ -1,50 +1,61 @@
-"""
-Gradio RAG UI for querying your email vector store.
-- Retrieves top-k chunks from Chroma.
-- Uses local Ollama (Qwen) to generate an answer with citations.
-"""
-from __future__ import annotations
-import os, json
+# gradio_app.py
 import gradio as gr
-from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings
-import requests
+from notebook_port import build_conversational_chain
 
-CHROMA_DIR = os.getenv("CHROMA_DIR", "mailstore/chroma_openai1536")
-COLLECTION = os.getenv("CHROMA_COLLECTION", "email_chunks_openai1536")
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/generate")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
-OPENAI_MODEL = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")
+# Build once at startup. Uses your Chroma store + Ollama settings from notebook_port.py
+def _new_chain():
+    return build_conversational_chain()
 
-def load_vs():
-    emb = OpenAIEmbeddings(model=OPENAI_MODEL, dimensions=1536)
-    return Chroma(collection_name=COLLECTION, persist_directory=CHROMA_DIR, embedding_function=emb)
+# Keep the chain in app state so its internal memory tracks the conversation
+CHAIN = _new_chain()
 
-def answer(query: str, k: int = 5) -> str:
-    vs = load_vs()
-    docs = vs.similarity_search(query, k=k)
-    context = "\n\n".join([f"[{i}] {d.page_content}" for i,d in enumerate(docs, start=1)])
-    meta = [d.metadata for d in docs]
+def respond(user_msg, chat_history):
+    """
+    Called on each submit. We let the LangChain ConversationalRetrievalChain
+    handle history internally; Gradio history is only for UI display.
+    """
+    try:
+        result = CHAIN.invoke({"question": user_msg})
+        answer = result.get("answer") or ""
+    except Exception as e:
+        # Fail loudly so you fix config fast
+        answer = f"[ERROR] {type(e).__name__}: {e}"
+    return answer
 
-    prompt = (
-        "You are an assistant that answers using ONLY the provided context.\n"
-        "If the answer isn't present, say "I don't know from the given emails."\n"
-        "Return a concise answer and list the citation indices you used.\n\n"
-        f"CONTEXT:\n{context}\n\nQUESTION: {query}\nANSWER:"
-    )
-    payload = {"model": OLLAMA_MODEL, "prompt": prompt, "stream": False}
-    r = requests.post(OLLAMA_URL, json=payload, timeout=120)
-    r.raise_for_status()
-    ans = r.json().get("response", "").strip()
-    return ans + "\n\nCitations metadata:\n" + json.dumps(meta, ensure_ascii=False, indent=2)
+def reset_session():
+    """
+    Rebuild the chain to clear its internal memory AND clear the UI.
+    """
+    global CHAIN
+    CHAIN = _new_chain()
+    return []
 
-with gr.Blocks(title="Email RAG (Local Qwen)") as demo:
-    gr.Markdown("# Email RAG (Local Qwen)")
-    gr.Markdown("Query your email vector store. Embeddings are OpenAI; generation is local Qwen via Ollama.")
-    inp = gr.Textbox(label="Query")
-    topk = gr.Slider(1, 10, value=5, step=1, label="Top-K")
-    out = gr.Textbox(label="Answer", lines=12)
-    btn = gr.Button("Search")
-    btn.click(fn=answer, inputs=[inp, topk], outputs=out)
+with gr.Blocks(title="Email RAG Chat") as demo:
+    gr.Markdown("### Email RAG Chat")
+    chat = gr.Chatbot(height=450)
+    msg = gr.Textbox(placeholder="Ask something grounded in your emails…", autofocus=True)
+    send = gr.Button("Send", variant="primary")
+    reset = gr.Button("Reset session")
+
+    # On submit via Enter or Send
+    def _user_submit(m, h):
+        h = h + [[m, None]]
+        return "", h
+
+    def _bot_reply(h):
+        user_latest = h[-1][0]
+        bot = respond(user_latest, h)
+        h[-1][1] = bot
+        return h
+
+    msg.submit(_user_submit, [msg, chat], [msg, chat]).then(_bot_reply, inputs=chat, outputs=chat)
+    send.click(_user_submit, [msg, chat], [msg, chat]).then(_bot_reply, inputs=chat, outputs=chat)
+
+    # Full memory reset (chain + UI)
+    reset.click(fn=reset_session, outputs=chat)
+
 if __name__ == "__main__":
-    demo.launch()
+    # Expose on localhost:7860. Change host/port as needed.
+    demo.launch(server_name="0.0.0.0", server_port=7860, show_error=True)
+
+
